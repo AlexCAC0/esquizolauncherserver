@@ -1,0 +1,534 @@
+let currentStaff = null;
+let allUsers = [];
+
+// Initialize Dashboard
+document.addEventListener('DOMContentLoaded', async () => {
+  await checkAuth();
+  setupNavigation();
+  setupDropzone();
+});
+
+// Auth Verification
+async function checkAuth() {
+  try {
+    const res = await fetch('/auth/me');
+    const data = await res.json();
+
+    if (data.authenticated && data.user) {
+      currentStaff = data.user;
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('admin-app').style.display = 'flex';
+
+      document.getElementById('staff-username').textContent = currentStaff.username;
+      document.getElementById('staff-role').textContent = currentStaff.role || 'Staff';
+
+      if (currentStaff.avatar) {
+        document.getElementById('staff-avatar').innerHTML = `
+          <img src="https://cdn.discordapp.com/avatars/${currentStaff.id}/${currentStaff.avatar}.png" alt="Avatar">
+        `;
+      } else {
+        document.getElementById('staff-avatar').textContent = currentStaff.username.slice(0, 2).toUpperCase();
+      }
+
+      // Load initial tab data
+      loadInstances();
+    } else {
+      document.getElementById('login-overlay').style.display = 'flex';
+      document.getElementById('admin-app').style.display = 'none';
+    }
+  } catch (err) {
+    console.error('Error checking auth:', err);
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('admin-app').style.display = 'none';
+  }
+}
+
+// Navigation Tabs
+function setupNavigation() {
+  const buttons = document.querySelectorAll('.nav-btn');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.tab;
+
+      // Update button active state
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Update content tab active state
+      document.querySelectorAll('.content-tab').forEach(t => t.classList.remove('active'));
+      const activeTab = document.getElementById(`tab-${tabName}`);
+      if (activeTab) activeTab.classList.add('active');
+
+      // Refresh tab data
+      if (tabName === 'instances') loadInstances();
+      else if (tabName === 'users') loadUsers();
+      else if (tabName === 'staff') loadStaff();
+      else if (tabName === 'settings') loadSettings();
+    });
+  });
+}
+
+// Toast notification helper
+function showToast(message, isError = false) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.style.borderColor = isError ? 'var(--danger)' : 'var(--primary)';
+  toast.style.display = 'block';
+  setTimeout(() => {
+    toast.style.display = 'none';
+  }, 3500);
+}
+
+// --- INSTANCE MANAGEMENT ---
+
+async function loadInstances() {
+  const container = document.getElementById('instances-container');
+  container.innerHTML = '<p style="color:var(--text-muted)">Cargando instancias...</p>';
+
+  try {
+    const res = await fetch('/admin/api/instances');
+    const data = await res.json();
+    const instances = data.instances || [];
+
+    if (instances.length === 0) {
+      container.innerHTML = `
+        <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; background: var(--bg-card); border-radius: 14px; border: 1px dashed var(--border-subtle);">
+          <p style="color: var(--text-secondary); margin-bottom: 16px;">No hay instancias creadas todavía.</p>
+          <button class="btn btn-primary" onclick="openCreateInstanceModal()">Crear Primera Instancia</button>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = instances.map(inst => `
+      <div class="instance-card">
+        <div class="inst-banner-preview" style="${inst.banner ? `background-image: url('${inst.banner}')` : ''}">
+          <img class="inst-logo-preview" src="${inst.logo || 'data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'40\' height=\'40\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23a855f7\' stroke-width=\'2\'><rect x=\'3\' y=\'3\' width=\'18\' height=\'18\' rx=\'2\'/></svg>'}" alt="Logo">
+        </div>
+
+        <div class="inst-content">
+          <div class="inst-title-row">
+            <h3 class="inst-title">${escapeHtml(inst.name)}</h3>
+            <span class="inst-id-badge" title="ID Privado">${inst.id}</span>
+          </div>
+
+          <p class="inst-desc">${escapeHtml(inst.description || 'Sin descripción.')}</p>
+
+          <div class="inst-meta">
+            <span class="meta-pill">MC ${inst.mc_version || '1.20.1'}</span>
+            <span class="meta-pill">${(inst.loader?.type || 'fabric').toUpperCase()} ${inst.loader?.version || ''}</span>
+            <span class="meta-pill">${inst.stats?.total_mods || 0} mods</span>
+          </div>
+
+          <!-- 18-CHAR UNIQUE ACCESS CODE -->
+          <div class="code-box">
+            <div>
+              <div class="code-label">Código Único (18 chars)</div>
+              <div class="code-value">${inst.access_code}</div>
+            </div>
+            <button class="btn-copy" onclick="copyAccessCode('${inst.access_code}')">Copiar</button>
+          </div>
+
+          <div class="inst-actions">
+            <button class="btn btn-secondary btn-sm" onclick="regenerateCode('${inst.id}')" title="Generar nuevo código de acceso de 18 caracteres">
+              Regenerar Código
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="deleteInstance('${inst.id}', '${escapeHtml(inst.name)}')">
+              Eliminar
+            </button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error('Error loading instances:', err);
+    container.innerHTML = '<p style="color:var(--danger)">Error al cargar instancias.</p>';
+  }
+}
+
+function copyAccessCode(code) {
+  navigator.clipboard.writeText(code).then(() => {
+    showToast(`Código copiado al portapapeles: ${code}`);
+  });
+}
+
+async function regenerateCode(id) {
+  if (!confirm(`¿Regenerar el código de acceso para la instancia '${id}'? Los clientes que usen el código anterior no podrán registrarla nuevamente.`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/admin/api/instances/${id}/regenerate-code`, { credentials: 'include', method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Nuevo código generado: ${data.access_code}`);
+      loadInstances();
+    } else {
+      showToast(data.error || 'Error al regenerar código', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+async function deleteInstance(id, name) {
+  if (!confirm(`¿Estás seguro de que deseas eliminar permanentemente la instancia '${name}' (ID: ${id})? Esta acción no se puede deshacer.`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/admin/api/instances/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Instancia eliminada correctamente');
+      loadInstances();
+    } else {
+      showToast(data.error || 'Error al eliminar instancia', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+function openCreateInstanceModal() {
+  document.getElementById('modal-instance-title').textContent = 'Crear Nueva Instancia';
+  document.getElementById('instance-form').reset();
+  document.getElementById('inst-id').disabled = false;
+  document.getElementById('instance-is-edit').value = 'false';
+  document.getElementById('mrpack-filename').style.display = 'none';
+  openModal('instance-modal');
+}
+
+function setupDropzone() {
+  const mrpackInput = document.getElementById('inst-mrpack');
+  const preview = document.getElementById('mrpack-filename');
+  mrpackInput.addEventListener('change', () => {
+    if (mrpackInput.files.length > 0) {
+      preview.textContent = 'Archivo seleccionado: ' + mrpackInput.files[0].name;
+      preview.style.display = 'inline-block';
+    } else {
+      preview.style.display = 'none';
+    }
+  });
+}
+
+async function handleInstanceSubmit(e) {
+  e.preventDefault();
+  const idInput = document.getElementById('inst-id');
+  const idVal = idInput.value.trim();
+
+  // Strict regex check for lowercase letters only:
+  if (!/^[a-z]+$/.test(idVal)) {
+    showToast('El ID solo debe contener letras minúsculas (sin números, mayúsculas ni espacios)', true);
+    idInput.focus();
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('id', idVal);
+  formData.append('name', document.getElementById('inst-name').value.trim());
+  formData.append('description', document.getElementById('inst-desc').value.trim());
+
+  const logoFile = document.getElementById('inst-logo').files[0];
+  if (logoFile) formData.append('logo', logoFile);
+
+  const bannerFile = document.getElementById('inst-banner').files[0];
+  if (bannerFile) formData.append('banner', bannerFile);
+
+  const mrpackFile = document.getElementById('inst-mrpack').files[0];
+  if (mrpackFile) formData.append('mrpack', mrpackFile);
+
+  const saveBtn = document.getElementById('btn-save-instance');
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Procesando .mrpack...';
+
+  try {
+    const res = await fetch('/admin/api/instances', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+
+    if (data.success) {
+      showToast(`¡Instancia creada con éxito! Código: ${data.instance.access_code}`);
+      closeModal('instance-modal');
+      loadInstances();
+    } else {
+      showToast(data.error || 'Error al procesar instancia', true);
+    }
+  } catch (err) {
+    showToast('Error de red al subir archivos', true);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Procesar y Guardar';
+  }
+}
+
+// --- USER MANAGEMENT ---
+
+async function loadUsers() {
+  const tbody = document.getElementById('users-table-body');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Cargando usuarios...</td></tr>';
+
+  try {
+    const res = await fetch('/admin/api/users');
+    const data = await res.json();
+    allUsers = data.users || [];
+    renderUsersTable(allUsers);
+  } catch (err) {
+    console.error('Error loading users:', err);
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger)">Error al cargar lista de usuarios.</td></tr>';
+  }
+}
+
+function renderUsersTable(users) {
+  const tbody = document.getElementById('users-table-body');
+  if (users.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">No hay usuarios registrados todavía.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td><strong>${escapeHtml(u.username)}</strong></td>
+      <td>
+        <span class="badge-status ${u.type === 'microsoft' ? 'badge-microsoft' : 'badge-offline'}">
+          ${u.type === 'microsoft' ? 'Microsoft Premium' : 'Offline'}
+        </span>
+      </td>
+      <td>
+        ${u.discord_username ? `
+          <span style="color:#818cf8; font-weight:600;">@${escapeHtml(u.discord_username)}</span>
+        ` : '<span style="color:var(--text-muted)">No vinculado</span>'}
+      </td>
+      <td><code style="color:var(--text-secondary)">${u.discord_id || '-'}</code></td>
+      <td>${u.last_login ? new Date(u.last_login).toLocaleString() : 'Nunca'}</td>
+      <td>
+        <span class="badge-status ${u.is_banned ? 'badge-banned' : 'badge-active'}">
+          ${u.is_banned ? 'Baneado' : 'Activo'}
+        </span>
+        ${u.is_banned && u.ban_reason ? `<br><small style="color:#f87171">${escapeHtml(u.ban_reason)}</small>` : ''}
+      </td>
+      <td>
+        <div style="display:flex; gap:6px;">
+          ${u.is_banned ? `
+            <button class="btn btn-secondary btn-sm" onclick="unbanUser('${escapeHtml(u.username)}')">Desbanear</button>
+          ` : `
+            <button class="btn btn-danger btn-sm" onclick="banUser('${escapeHtml(u.username)}')">Banear</button>
+          `}
+          ${u.discord_id ? `
+            <button class="btn btn-secondary btn-sm" onclick="adminUnlinkDiscord('${escapeHtml(u.username)}')">Desvincular Discord</button>
+          ` : ''}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterUsers() {
+  const term = document.getElementById('user-search').value.toLowerCase().trim();
+  if (!term) {
+    renderUsersTable(allUsers);
+    return;
+  }
+  const filtered = allUsers.filter(u =>
+    u.username.toLowerCase().includes(term) ||
+    (u.discord_id && u.discord_id.includes(term)) ||
+    (u.discord_username && u.discord_username.toLowerCase().includes(term))
+  );
+  renderUsersTable(filtered);
+}
+
+async function banUser(username) {
+  const reason = prompt(`Motivo de la sanción para '${username}':`, 'Infracción de normas del evento');
+  if (reason === null) return;
+
+  try {
+    const res = await fetch(`/admin/api/users/${encodeURIComponent(username)}/ban`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Usuario '${username}' sancionado.`);
+      loadUsers();
+    } else {
+      showToast(data.error || 'Error al sancionar', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+async function unbanUser(username) {
+  try {
+    const res = await fetch(`/admin/api/users/${encodeURIComponent(username)}/unban`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Sanción removida para '${username}'.`);
+      loadUsers();
+    } else {
+      showToast(data.error || 'Error al desbanear', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+async function adminUnlinkDiscord(username) {
+  if (!confirm(`¿Desvincular la cuenta de Discord de '${username}'?`)) return;
+
+  try {
+    const res = await fetch(`/admin/api/users/${encodeURIComponent(username)}/unlink-discord`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Discord desvinculado.');
+      loadUsers();
+    } else {
+      showToast(data.error || 'Error al desvincular', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+// --- STAFF MANAGEMENT ---
+
+async function loadStaff() {
+  const tbody = document.getElementById('staff-table-body');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Cargando lista de staff...</td></tr>';
+
+  try {
+    const res = await fetch('/admin/api/staff');
+    const data = await res.json();
+    const staffList = data.staff || [];
+
+    if (staffList.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:30px;">No hay miembros registrados en la whitelist.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = staffList.map(s => `
+      <tr>
+        <td><code>${s.discord_id}</code></td>
+        <td><strong>${escapeHtml(s.tag || 'Staff')}</strong></td>
+        <td>
+          <span class="role-badge">${s.role === 'admin' ? 'Administrador' : 'Moderador'}</span>
+        </td>
+        <td>${s.added_at ? new Date(s.added_at).toLocaleDateString() : '-'}</td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="removeStaff('${s.discord_id}')">Revocar</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--danger)">Error al cargar staff.</td></tr>';
+  }
+}
+
+function openAddStaffModal() {
+  document.getElementById('staff-form').reset();
+  openModal('staff-modal');
+}
+
+async function handleStaffSubmit(e) {
+  e.preventDefault();
+  const discord_id = document.getElementById('staff-discord-id').value.trim();
+  const tag = document.getElementById('staff-tag').value.trim();
+  const role = document.getElementById('staff-role-select').value;
+
+  try {
+    const res = await fetch('/admin/api/staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discord_id, tag, role })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Miembro de staff añadido a la whitelist');
+      closeModal('staff-modal');
+      loadStaff();
+    } else {
+      showToast(data.error || 'Error al añadir staff', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+async function removeStaff(discordId) {
+  if (!confirm(`¿Revocar acceso administrativo a Discord ID ${discordId}?`)) return;
+
+  try {
+    const res = await fetch(`/admin/api/staff/${discordId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Acceso revocado');
+      loadStaff();
+    } else {
+      showToast(data.error || 'Error al revocar', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+// --- SETTINGS MANAGEMENT ---
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/admin/api/settings');
+    const data = await res.json();
+    const settings = data.settings || {};
+    document.getElementById('setting-announcement').value = settings.announcement || '';
+    document.getElementById('setting-tos').value = settings.tos || '';
+  } catch (err) {
+    showToast('Error al cargar configuración', true);
+  }
+}
+
+async function saveSettings() {
+  const announcement = document.getElementById('setting-announcement').value;
+  const tos = document.getElementById('setting-tos').value;
+
+  try {
+    const res = await fetch('/admin/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ announcement, tos })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Configuración y Términos guardados correctamente');
+    } else {
+      showToast(data.error || 'Error al guardar', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+// Modal helpers
+function openModal(id) {
+  const modal = document.getElementById(id);
+  if (modal) modal.classList.add('open');
+}
+
+function closeModal(id) {
+  const modal = document.getElementById(id);
+  if (modal) modal.classList.remove('open');
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/[&<>"']/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  }[m]));
+}
