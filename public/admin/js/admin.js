@@ -130,6 +130,9 @@ async function loadInstances() {
           </div>
 
           <div class="inst-actions">
+            <button class="btn btn-secondary btn-sm" onclick='openEditInstanceModal(${JSON.stringify({ id: inst.id, name: inst.name, description: inst.description || "" })})' title="Actualizar nombre, descripción, logo, banner o .mrpack">
+              Editar
+            </button>
             <button class="btn btn-secondary btn-sm" onclick="regenerateCode('${inst.id}')" title="Generar nuevo código de acceso de 18 caracteres">
               Regenerar Código
             </button>
@@ -192,8 +195,32 @@ function openCreateInstanceModal() {
   document.getElementById('modal-instance-title').textContent = 'Crear Nueva Instancia';
   document.getElementById('instance-form').reset();
   document.getElementById('inst-id').disabled = false;
+  document.getElementById('inst-id').required = true;
   document.getElementById('instance-is-edit').value = 'false';
   document.getElementById('mrpack-filename').style.display = 'none';
+  // Hide mrpack required hint when creating
+  document.getElementById('inst-mrpack').required = true;
+  document.getElementById('btn-save-instance').textContent = 'Procesar y Guardar';
+  openModal('instance-modal');
+}
+
+function openEditInstanceModal(inst) {
+  document.getElementById('modal-instance-title').textContent = 'Editar Instancia: ' + escapeHtml(inst.name);
+  document.getElementById('instance-form').reset();
+
+  // Populate existing values
+  document.getElementById('inst-id').value = inst.id;
+  document.getElementById('inst-id').disabled = true;
+  document.getElementById('inst-id').required = false;
+  document.getElementById('inst-name').value = inst.name || '';
+  document.getElementById('inst-desc').value = inst.description || '';
+
+  // In edit mode mrpack is optional (only re-upload if you want to update it)
+  document.getElementById('inst-mrpack').required = false;
+
+  document.getElementById('instance-is-edit').value = 'true';
+  document.getElementById('mrpack-filename').style.display = 'none';
+  document.getElementById('btn-save-instance').textContent = 'Guardar Cambios';
   openModal('instance-modal');
 }
 
@@ -212,18 +239,20 @@ function setupDropzone() {
 
 async function handleInstanceSubmit(e) {
   e.preventDefault();
+
+  const isEdit = document.getElementById('instance-is-edit').value === 'true';
   const idInput = document.getElementById('inst-id');
   const idVal = idInput.value.trim();
 
-  // Strict regex check for lowercase letters only:
-  if (!/^[a-z]+$/.test(idVal)) {
+  // Only validate ID format when creating (edit uses existing ID)
+  if (!isEdit && !/^[a-z]+$/.test(idVal)) {
     showToast('El ID solo debe contener letras minúsculas (sin números, mayúsculas ni espacios)', true);
     idInput.focus();
     return;
   }
 
   const formData = new FormData();
-  formData.append('id', idVal);
+  if (!isEdit) formData.append('id', idVal);
   formData.append('name', document.getElementById('inst-name').value.trim());
   formData.append('description', document.getElementById('inst-desc').value.trim());
 
@@ -238,27 +267,44 @@ async function handleInstanceSubmit(e) {
 
   const saveBtn = document.getElementById('btn-save-instance');
   saveBtn.disabled = true;
-  saveBtn.textContent = 'Procesando .mrpack...';
+  saveBtn.textContent = isEdit ? 'Guardando cambios...' : 'Procesando .mrpack...';
 
   try {
-    const res = await fetch('/admin/api/instances', {
-      method: 'POST',
-      body: formData
-    });
-    const data = await res.json();
-
-    if (data.success) {
-      showToast(`¡Instancia creada con éxito! Código: ${data.instance.access_code}`);
-      closeModal('instance-modal');
-      loadInstances();
+    let res, data;
+    if (isEdit) {
+      // PUT — update existing instance
+      res = await fetch(`/admin/api/instances/${encodeURIComponent(idVal)}`, {
+        method: 'PUT',
+        body: formData
+      });
+      data = await res.json();
+      if (data.success) {
+        showToast('¡Instancia actualizada correctamente!');
+        closeModal('instance-modal');
+        loadInstances();
+      } else {
+        showToast(data.error || 'Error al actualizar instancia', true);
+      }
     } else {
-      showToast(data.error || 'Error al procesar instancia', true);
+      // POST — create new instance
+      res = await fetch('/admin/api/instances', {
+        method: 'POST',
+        body: formData
+      });
+      data = await res.json();
+      if (data.success) {
+        showToast(`¡Instancia creada con éxito! Código: ${data.instance.access_code}`);
+        closeModal('instance-modal');
+        loadInstances();
+      } else {
+        showToast(data.error || 'Error al procesar instancia', true);
+      }
     }
   } catch (err) {
     showToast('Error de red al subir archivos', true);
   } finally {
     saveBtn.disabled = false;
-    saveBtn.textContent = 'Procesar y Guardar';
+    saveBtn.textContent = isEdit ? 'Guardar Cambios' : 'Procesar y Guardar';
   }
 }
 
