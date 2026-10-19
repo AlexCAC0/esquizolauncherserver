@@ -6,69 +6,10 @@ const db = require('../db');
 
 // Route to initiate Discord OAuth
 router.get('/discord', (req, res) => {
-  // If Discord credentials are not set, provide helpful message or dev login option
-  if (!config.DISCORD.CLIENT_ID || !config.DISCORD.CLIENT_SECRET) {
-    return res.send(`
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-        <meta charset="UTF-8">
-        <title>EsquizoStudios - Configuración Discord OAuth</title>
-        <style>
-          body { background: #0a0814; color: #f1f5f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-          .card { background: #130f26; border: 1px solid #7c3aed44; border-radius: 12px; padding: 32px; max-width: 500px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; }
-          h2 { color: #a855f7; margin-top: 0; }
-          p { color: #94a3b8; line-height: 1.6; font-size: 14px; }
-          code { background: #1e1b4b; color: #c084fc; padding: 2px 6px; border-radius: 4px; }
-          .btn { display: inline-block; margin-top: 16px; padding: 12px 24px; background: #7c3aed; color: #fff; text-decoration: none; border-radius: 8px; font-weight: 600; cursor: pointer; border: none; }
-          .btn:hover { background: #6d28d9; }
-          .dev-box { margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d2254; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>EsquizoStudios Admin</h2>
-          <p>Para activar el login oficial con Discord en producción, configura <code>DISCORD_CLIENT_ID</code> y <code>DISCORD_CLIENT_SECRET</code> en tu archivo <code>server/.env</code>.</p>
-          <div class="dev-box">
-            <p><strong>Modo Desarrollo / Inicial:</strong> Puedes ingresar como Administrador Maestro temporal para configurar el panel:</p>
-            <form action="/auth/dev-login" method="POST">
-              <input type="text" name="discord_id" placeholder="Tu Discord ID (ej: 123456789012345678)" required style="width: 80%; padding: 10px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #4338ca; background: #0d0a1a; color: white;">
-              <br>
-              <button type="submit" class="btn">Entrar como Administrador</button>
-            </form>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
-  }
-
   const scope = encodeURIComponent('identify');
   const redirectUri = encodeURIComponent(config.DISCORD.REDIRECT_URI);
   const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${config.DISCORD.CLIENT_ID}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}`;
   res.redirect(discordAuthUrl);
-});
-
-// Dev login for initial bootstrap if no OAuth app configured yet
-router.post('/dev-login', (req, res) => {
-  const { discord_id } = req.body;
-  if (!discord_id) return res.redirect('/auth/discord');
-
-  const cleanId = discord_id.trim();
-  // Auto-whitelist if staff table is empty or first user
-  if (db.getStaff().length === 0 || !db.isStaff(cleanId)) {
-    db.addStaff(cleanId, 'Owner (' + cleanId + ')', 'admin');
-  }
-
-  req.session.staffUser = {
-    id: cleanId,
-    username: 'EsquizoAdmin',
-    discriminator: '0000',
-    avatar: null,
-    role: 'admin'
-  };
-
-  res.redirect('/admin');
 });
 
 // Discord OAuth callback
@@ -171,16 +112,6 @@ router.get('/discord/client-start', (req, res) => {
   const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
   clientOAuthSessions.set(sessionId, { status: 'pending', created: Date.now() });
 
-  if (!config.DISCORD.CLIENT_ID || !config.DISCORD.CLIENT_SECRET) {
-    // Dev / Offline fallback mode: return dev url or prompt
-    return res.json({
-      success: true,
-      sessionId,
-      url: `/auth/discord/client-dev?session=${sessionId}`,
-      isDev: true
-    });
-  }
-
   const scope = encodeURIComponent('identify');
   // Callback route on server
   const clientCallbackUri = encodeURIComponent(`${req.protocol}://${req.get('host')}/auth/discord/client-callback`);
@@ -192,65 +123,6 @@ router.get('/discord/client-start', (req, res) => {
     url: discordUrl,
     isDev: false
   });
-});
-
-// Client Dev login fallback when OAuth credentials are not set
-router.get('/discord/client-dev', (req, res) => {
-  const { session } = req.query;
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-      <meta charset="UTF-8">
-      <title>Vincular Discord (Modo Dev) - EsquizoLauncher</title>
-      <style>
-        body { background: #0a0814; color: #f1f5f9; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-        .card { background: #130f26; border: 1px solid #7c3aed44; border-radius: 12px; padding: 32px; max-width: 420px; text-align: center; }
-        h2 { color: #a855f7; margin-top: 0; }
-        input { width: 85%; padding: 10px; margin: 8px 0; border-radius: 6px; border: 1px solid #4338ca; background: #0d0a1a; color: white; }
-        button { padding: 10px 20px; background: #7c3aed; color: #fff; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 10px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>Vincular Discord (Dev)</h2>
-        <p style="color:#94a3b8; font-size:14px;">Ingresa tus datos de Discord para vincularlos al launcher:</p>
-        <form method="POST" action="/auth/discord/client-dev-submit">
-          <input type="hidden" name="session" value="${session || ''}">
-          <input type="text" name="discord_id" placeholder="Discord ID (ej: 712345678901234567)" required><br>
-          <input type="text" name="discord_username" placeholder="Discord Username (ej: AlexCAC0)" required><br>
-          <button type="submit">Vincular y Volver al Launcher</button>
-        </form>
-      </div>
-    </body>
-    </html>
-  `);
-});
-
-router.post('/discord/client-dev-submit', (req, res) => {
-  const { session, discord_id, discord_username } = req.body;
-  if (session && clientOAuthSessions.has(session)) {
-    clientOAuthSessions.set(session, {
-      status: 'completed',
-      created: Date.now(),
-      user: {
-        id: discord_id.trim(),
-        username: discord_username.trim(),
-        avatar: null
-      }
-    });
-  }
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="es">
-    <head><meta charset="UTF-8"><title>¡Vinculado!</title></head>
-    <body style="background:#0a0814; color:#fff; font-family:sans-serif; text-align:center; padding-top:20vh;">
-      <h2 style="color:#4ade80;">¡Cuenta de Discord vinculada con éxito!</h2>
-      <p style="color:#94a3b8;">Ya puedes cerrar esta ventana y regresar a EsquizoLauncher.</p>
-      <script>window.close();</script>
-    </body>
-    </html>
-  `);
 });
 
 // Client Discord OAuth: Callback from Discord
