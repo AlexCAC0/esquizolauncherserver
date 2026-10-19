@@ -75,8 +75,20 @@ router.get('/discord/callback', async (req, res) => {
     }
 
     // Determine staff role
-    const staffEntry = db.getStaff().find(s => s.discord_id === discordUser.id);
-    const role = staffEntry ? staffEntry.role : 'moderator';
+    let staffEntry = db.getStaff().find(s => s.discord_id === discordUser.id);
+    let role = 'moderator';
+
+    if (config.DISCORD.DEFAULT_ADMIN_IDS.includes(discordUser.id)) {
+      role = 'admin';
+      if (!staffEntry) {
+        staffEntry = db.addStaff(discordUser.id, discordUser.username, 'admin');
+      }
+    } else if (staffEntry) {
+      role = staffEntry.role;
+    } else if (db.getStaff().length === 0) {
+      role = 'admin';
+      staffEntry = db.addStaff(discordUser.id, discordUser.username, 'admin');
+    }
 
     // Store in session
     req.session.staffUser = {
