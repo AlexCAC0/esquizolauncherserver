@@ -245,7 +245,14 @@ class Database {
 
   isStaff(discordId) {
     if (!discordId) return false;
-    return this.data.staff.some(s => s.discord_id === String(discordId).trim());
+    const clean = String(discordId).trim();
+    // Check database staff list
+    if (this.data.staff.some(s => s.discord_id === clean)) return true;
+    // Check config.DEFAULT_ADMIN_IDS directly from .env
+    if (config.DISCORD.DEFAULT_ADMIN_IDS.includes(clean)) return true;
+    // Auto-whitelist first user if staff list is completely empty
+    if (this.data.staff.length === 0) return true;
+    return false;
   }
 
   addStaff(discordId, tag, role = 'moderator') {
