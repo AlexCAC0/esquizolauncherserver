@@ -150,9 +150,34 @@ async function loadInstances() {
 }
 
 function copyAccessCode(code) {
-  navigator.clipboard.writeText(code).then(() => {
-    showToast(`Código copiado al portapapeles: ${code}`);
-  });
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(code).then(() => {
+      showToast(`Código copiado al portapapeles: ${code}`);
+    }).catch(() => {
+      fallbackCopy(code);
+    });
+  } else {
+    fallbackCopy(code);
+  }
+}
+
+function fallbackCopy(text) {
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.position = 'fixed';
+  textArea.style.top = '0';
+  textArea.style.left = '0';
+  textArea.style.opacity = '0';
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    document.execCommand('copy');
+    showToast(`Código copiado: ${text}`);
+  } catch (err) {
+    prompt('Copia manualmente el código de acceso:', text);
+  }
+  document.body.removeChild(textArea);
 }
 
 async function regenerateCode(id) {
