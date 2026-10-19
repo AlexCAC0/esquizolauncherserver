@@ -56,5 +56,6 @@ app.listen(config.PORT, () => {
   console.log(`  EsquizoStudios Server activo en puerto ${config.PORT}`);
   console.log(`  Panel Admin: http://localhost:${config.PORT}/admin`);
   console.log(`  API Cliente: http://localhost:${config.PORT}/api/client`);
+  console.log(`  Discord Client ID: "${config.DISCORD.CLIENT_ID || 'VACIO/NO ENCONTRADO'}"`);
   console.log(`===============================================`);
 });
