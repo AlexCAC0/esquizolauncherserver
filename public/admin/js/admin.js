@@ -119,6 +119,9 @@ async function loadInstances() {
             <span class="meta-pill">MC ${inst.mc_version || '1.20.1'}</span>
             <span class="meta-pill">${(inst.loader?.type || 'fabric').toUpperCase()} ${inst.loader?.version || ''}</span>
             <span class="meta-pill">${inst.stats?.total_mods || 0} mods</span>
+            ${inst.server_ip ? `<span class="meta-pill" style="color:var(--accent-cyan); border-color:rgba(6,182,212,0.3);">🌐 ${escapeHtml(inst.server_ip)}</span>` : ''}
+            ${inst.max_uses ? `<span class="meta-pill" style="color:#a855f7;">👥 ${inst.claimed_count || 0}/${inst.max_uses} cupos</span>` : ''}
+            ${inst.expires_at ? `<span class="meta-pill" style="color:#f59e0b;">⏳ Vence: ${new Date(inst.expires_at).toLocaleDateString()}</span>` : ''}
           </div>
 
           <!-- 18-CHAR UNIQUE ACCESS CODE -->
@@ -131,7 +134,14 @@ async function loadInstances() {
           </div>
 
           <div class="inst-actions">
-            <button class="btn btn-secondary btn-sm" onclick='openEditInstanceModal(${JSON.stringify({ id: inst.id, name: inst.name, description: inst.description || "" })})' title="Actualizar nombre, descripción, logo, banner o .mrpack">
+            <button class="btn btn-secondary btn-sm" onclick='openEditInstanceModal(${JSON.stringify({
+              id: inst.id,
+              name: inst.name,
+              description: inst.description || "",
+              server_ip: inst.server_ip || "",
+              expires_at: inst.expires_at || "",
+              max_uses: inst.max_uses || ""
+            })})' title="Actualizar nombre, descripción, servidor o .mrpack">
               Editar
             </button>
             <a href="/admin/api/instances/${inst.id}/download-mrpack" class="btn btn-secondary btn-sm" style="text-decoration:none;" title="Descargar paquete .mrpack de esta instancia">
@@ -227,6 +237,10 @@ function openCreateInstanceModal() {
   document.getElementById('inst-id').required = true;
   document.getElementById('instance-is-edit').value = 'false';
   document.getElementById('mrpack-filename').style.display = 'none';
+  // Reset extra fields
+  document.getElementById('inst-server-ip').value = '';
+  document.getElementById('inst-expires-at').value = '';
+  document.getElementById('inst-max-uses').value = '';
   // Hide mrpack required hint when creating
   document.getElementById('inst-mrpack').required = true;
   document.getElementById('btn-modal-download-mrpack').style.display = 'none';
@@ -244,6 +258,9 @@ function openEditInstanceModal(inst) {
   document.getElementById('inst-id').required = false;
   document.getElementById('inst-name').value = inst.name || '';
   document.getElementById('inst-desc').value = inst.description || '';
+  document.getElementById('inst-server-ip').value = inst.server_ip || '';
+  document.getElementById('inst-expires-at').value = inst.expires_at ? inst.expires_at.split('T')[0] : '';
+  document.getElementById('inst-max-uses').value = inst.max_uses || '';
 
   // In edit mode mrpack is optional (only re-upload if you want to update it)
   document.getElementById('inst-mrpack').required = false;
@@ -291,6 +308,9 @@ async function handleInstanceSubmit(e) {
   if (!isEdit) formData.append('id', idVal);
   formData.append('name', document.getElementById('inst-name').value.trim());
   formData.append('description', document.getElementById('inst-desc').value.trim());
+  formData.append('server_ip', document.getElementById('inst-server-ip').value.trim());
+  formData.append('expires_at', document.getElementById('inst-expires-at').value);
+  formData.append('max_uses', document.getElementById('inst-max-uses').value);
 
   const logoFile = document.getElementById('inst-logo').files[0];
   if (logoFile) formData.append('logo', logoFile);
@@ -566,6 +586,7 @@ async function loadSettings() {
     const data = await res.json();
     const settings = data.settings || {};
     document.getElementById('setting-announcement').value = settings.announcement || '';
+    document.getElementById('setting-webhook').value = settings.discord_webhook_url || '';
     document.getElementById('setting-tos').value = settings.tos || '';
   } catch (err) {
     showToast('Error al cargar configuración', true);
@@ -574,13 +595,14 @@ async function loadSettings() {
 
 async function saveSettings() {
   const announcement = document.getElementById('setting-announcement').value;
+  const discord_webhook_url = document.getElementById('setting-webhook').value.trim();
   const tos = document.getElementById('setting-tos').value;
 
   try {
     const res = await fetch('/admin/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ announcement, tos })
+      body: JSON.stringify({ announcement, discord_webhook_url, tos })
     });
     const data = await res.json();
     if (data.success) {

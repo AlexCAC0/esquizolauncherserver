@@ -6,6 +6,7 @@ const router = express.Router();
 const config = require('../config');
 const db = require('../db');
 const { processMrpack, packInstanceToMrpack } = require('../mrpack');
+const { sendDiscordAdminWebhook } = require('../webhook');
 
 // Storage engine for file uploads
 const storage = multer.diskStorage({
@@ -52,7 +53,7 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      const { id, name, description } = req.body;
+      const { id, name, description, server_ip, expires_at, max_uses } = req.body;
 
       if (!id || !name) {
         return res.status(400).json({ error: 'El ID y el nombre público son obligatorios.' });
@@ -122,12 +123,28 @@ router.post(
         id: cleanId,
         name: name.trim(),
         description: (description || '').trim(),
+        server_ip: (server_ip || '').trim(),
+        expires_at: expires_at ? new Date(expires_at).toISOString() : null,
+        max_uses: max_uses ? parseInt(max_uses, 10) : null,
         logo: logoUrl,
         banner: bannerUrl,
         access_code: accessCode,
         mc_version: manifestData ? manifestData.mc_version : '1.20.1',
         loader: manifestData ? manifestData.loader : { type: 'fabric', version: 'latest' },
         stats: manifestData ? manifestData.stats : { total_files: 0, total_mods: 0, total_size: 0 }
+      });
+
+      sendDiscordAdminWebhook({
+        title: '✨ Nueva Instancia Creada',
+        description: `Se ha configurado y registrado una nueva instancia para eventos.`,
+        color: 0x10b981, // Verde
+        fields: [
+          { name: 'Instancia', value: `**${newInstance.name}** (\`${newInstance.id}\`)`, inline: true },
+          { name: 'Código de Acceso', value: `\`${newInstance.access_code}\``, inline: true },
+          { name: 'Staff', value: req.session.staffUser ? `@${req.session.staffUser.username}` : 'Admin', inline: true },
+          { name: 'IP del Servidor', value: newInstance.server_ip || 'No asignada', inline: true },
+          { name: 'Límite de Usos', value: newInstance.max_uses ? `${newInstance.max_uses} jugadores` : 'Ilimitado', inline: true }
+        ]
       });
 
       res.status(201).json({
@@ -158,11 +175,14 @@ router.put(
         return res.status(404).json({ error: 'Instancia no encontrada' });
       }
 
-      const { name, description } = req.body;
+      const { name, description, server_ip, expires_at, max_uses } = req.body;
       const instanceDir = path.join(config.INSTANCES_DIR, id);
 
       if (name) inst.name = name.trim();
       if (description !== undefined) inst.description = description.trim();
+      if (server_ip !== undefined) inst.server_ip = server_ip.trim();
+      if (expires_at !== undefined) inst.expires_at = expires_at ? new Date(expires_at).toISOString() : null;
+      if (max_uses !== undefined) inst.max_uses = max_uses ? parseInt(max_uses, 10) : null;
 
       if (req.files['logo'] && req.files['logo'][0]) {
         const logoFile = req.files['logo'][0];
@@ -274,6 +294,19 @@ router.post('/api/users/:username/ban', (req, res) => {
   const { reason } = req.body;
   const user = db.setUserBan(username, true, reason);
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  sendDiscordAdminWebhook({
+    title: '🚨 Usuario Sancionado (Baneado)',
+    description: `Un jugador ha recibido una sanción administrativa en EsquizoLauncher.`,
+    color: 0xef4444, // Rojo
+    fields: [
+      { name: 'Jugador', value: `\`${user.username}\``, inline: true },
+      { name: 'Discord ID', value: user.discord_id ? `\`${user.discord_id}\`` : 'N/A', inline: true },
+      { name: 'Staff Ejecutor', value: req.session.staffUser ? `@${req.session.staffUser.username}` : 'Admin', inline: true },
+      { name: 'Motivo', value: user.ban_reason || 'Infracción a los términos de servicio' }
+    ]
+  });
+
   res.json({ success: true, user });
 });
 
@@ -324,8 +357,8 @@ router.get('/api/settings', (req, res) => {
 });
 
 router.put('/api/settings', (req, res) => {
-  const { tos, announcement } = req.body;
-  const updated = db.updateSettings({ tos, announcement });
+  const { tos, announcement, discord_webhook_url } = req.body;
+  const updated = db.updateSettings({ tos, announcement, discord_webhook_url });
   res.json({ success: true, settings: updated });
 });
 
@@ -375,6 +408,18 @@ router.post(
         filename,
         download_url: downloadUrl,
         file_size: fileSize
+      });
+
+      sendDiscordAdminWebhook({
+        title: '🚀 Nueva Actualización de EsquizoLauncher',
+        description: `Se ha publicado una nueva versión del launcher en los servidores oficiales.`,
+        color: 0x3b82f6, // Azul
+        fields: [
+          { name: 'Versión', value: `\`v${cleanVersion}\``, inline: true },
+          { name: 'Tipo', value: saved.is_mandatory ? '🚨 **Obligatoria**' : 'Opcional', inline: true },
+          { name: 'Tamaño', value: `${(fileSize / (1024 * 1024)).toFixed(1)} MB`, inline: true },
+          { name: 'Notas', value: saved.notes || 'Mejoras y estabilidad' }
+        ]
       });
 
       res.status(201).json({

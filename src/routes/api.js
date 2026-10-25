@@ -4,6 +4,7 @@ const fs = require('fs');
 const router = express.Router();
 const config = require('../config');
 const db = require('../db');
+const { pingMinecraftServer } = require('../ping');
 
 // Client ping & announcement
 router.get('/status', (req, res) => {
@@ -143,6 +144,29 @@ router.post('/instance/claim', (req, res) => {
     });
   }
 
+  // Check code expiration date
+  if (instance.expires_at) {
+    const expDate = new Date(instance.expires_at);
+    if (!isNaN(expDate.getTime()) && expDate.getTime() < Date.now()) {
+      return res.status(403).json({
+        error: `El código de acceso para '${instance.name}' ha expirado el ${expDate.toLocaleDateString()}.`
+      });
+    }
+  }
+
+  // Check maximum claims limit
+  if (instance.max_uses && typeof instance.max_uses === 'number' && instance.max_uses > 0) {
+    const currentClaims = instance.claimed_count || 0;
+    if (currentClaims >= instance.max_uses) {
+      return res.status(403).json({
+        error: `Este código de acceso ha alcanzado el límite máximo permitido de jugadores (${instance.max_uses}).`
+      });
+    }
+  }
+
+  // Increment claim count
+  db.incrementInstanceClaim(instance.id);
+
   // Return public instance details to client
   res.json({
     success: true,
@@ -152,6 +176,7 @@ router.post('/instance/claim', (req, res) => {
       description: instance.description,
       logo: instance.logo,
       banner: instance.banner,
+      server_ip: instance.server_ip || null,
       mc_version: instance.mc_version,
       loader: instance.loader,
       updated_at: instance.updated_at
@@ -207,6 +232,36 @@ router.get('/instance/:id/manifest', (req, res) => {
       files: [],
       overrides: []
     }
+  });
+});
+
+// Ping Minecraft Server for live status (Ping, Players Online, MOTD)
+router.get('/instance/:id/server-status', async (req, res) => {
+  const { id } = req.params;
+  const instance = db.getInstanceById(id);
+
+  if (!instance) {
+    return res.status(404).json({ error: 'Instancia no encontrada' });
+  }
+
+  const serverIp = (instance.server_ip || '').trim();
+  if (!serverIp) {
+    return res.json({ has_server: false, online: false });
+  }
+
+  let host = serverIp;
+  let port = 25565;
+  if (serverIp.includes(':')) {
+    const parts = serverIp.split(':');
+    host = parts[0];
+    port = parseInt(parts[1], 10) || 25565;
+  }
+
+  const status = await pingMinecraftServer(host, port, 3000);
+  res.json({
+    has_server: true,
+    server_ip: serverIp,
+    ...status
   });
 });
 

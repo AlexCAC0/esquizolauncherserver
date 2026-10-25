@@ -143,6 +143,10 @@ class Database {
         instanceData.access_code = this.generateAccessCode();
       }
       const newInst = {
+        server_ip: '',
+        expires_at: null,
+        max_uses: null,
+        claimed_count: 0,
         ...instanceData,
         created_at: now,
         updated_at: now
@@ -151,6 +155,16 @@ class Database {
       this.save();
       return newInst;
     }
+  }
+
+  incrementInstanceClaim(id) {
+    const inst = this.getInstanceById(id);
+    if (inst) {
+      inst.claimed_count = (inst.claimed_count || 0) + 1;
+      this.save();
+      return inst.claimed_count;
+    }
+    return 0;
   }
 
   deleteInstance(id) {

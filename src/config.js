@@ -11,7 +11,8 @@ module.exports = {
     CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET || '',
     REDIRECT_URI: process.env.DISCORD_REDIRECT_URI || 'http://localhost:3001/auth/discord/callback',
     BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || '',
-    DEFAULT_ADMIN_IDS: (process.env.DEFAULT_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
+    DEFAULT_ADMIN_IDS: (process.env.DEFAULT_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean),
+    ADMIN_WEBHOOK_URL: process.env.DISCORD_ADMIN_WEBHOOK_URL || ''
   },
 
   // Storage
