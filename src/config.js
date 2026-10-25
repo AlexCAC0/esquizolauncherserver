@@ -18,6 +18,7 @@ module.exports = {
   DATA_DIR: path.join(__dirname, '..', 'data'),
   UPLOADS_DIR: path.join(__dirname, '..', 'public', 'uploads'),
   INSTANCES_DIR: path.join(__dirname, '..', 'public', 'uploads', 'instances'),
+  UPDATES_DIR: path.join(__dirname, '..', 'public', 'uploads', 'updates'),
 
   STUDIO_NAME: 'EsquizoStudios',
   VERSION: '1.0.0'

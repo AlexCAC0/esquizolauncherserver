@@ -132,6 +132,52 @@ function processMrpack(mrpackFilePath, targetDir) {
   return manifest;
 }
 
+/**
+ * Packs an existing instance directory back into a valid Modrinth (.mrpack) buffer.
+ * @param {string} instanceDir - Directory where manifest.json and overrides/ reside
+ * @returns {Buffer} - The .mrpack ZIP buffer
+ */
+function packInstanceToMrpack(instanceDir) {
+  const manifestPath = path.join(instanceDir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('No se encontró manifest.json en la instancia para generar el .mrpack');
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+  const zip = new AdmZip();
+
+  // Recreate standard Modrinth modrinth.index.json
+  const indexData = {
+    formatVersion: 1,
+    game: 'minecraft',
+    versionId: manifest.name || 'esquizo-event',
+    name: manifest.name || 'Esquizo Event',
+    summary: manifest.summary || '',
+    files: manifest.files || [],
+    dependencies: {
+      minecraft: manifest.mc_version || '1.20.1'
+    }
+  };
+
+  if (manifest.loader) {
+    if (manifest.loader.type === 'fabric') indexData.dependencies['fabric-loader'] = manifest.loader.version || 'latest';
+    else if (manifest.loader.type === 'forge') indexData.dependencies['forge'] = manifest.loader.version || 'latest';
+    else if (manifest.loader.type === 'neoforge') indexData.dependencies['neoforge'] = manifest.loader.version || 'latest';
+    else if (manifest.loader.type === 'quilt') indexData.dependencies['quilt-loader'] = manifest.loader.version || 'latest';
+  }
+
+  zip.addFile('modrinth.index.json', Buffer.from(JSON.stringify(indexData, null, 2), 'utf-8'));
+
+  // Add overrides folder if it exists
+  const overridesDir = path.join(instanceDir, 'overrides');
+  if (fs.existsSync(overridesDir)) {
+    zip.addLocalFolder(overridesDir, 'overrides');
+  }
+
+  return zip.toBuffer();
+}
+
 module.exports = {
-  processMrpack
+  processMrpack,
+  packInstanceToMrpack
 };

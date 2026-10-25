@@ -64,6 +64,7 @@ function setupNavigation() {
       else if (tabName === 'users') loadUsers();
       else if (tabName === 'staff') loadStaff();
       else if (tabName === 'settings') loadSettings();
+      else if (tabName === 'updates') loadUpdates();
     });
   });
 }
@@ -133,6 +134,9 @@ async function loadInstances() {
             <button class="btn btn-secondary btn-sm" onclick='openEditInstanceModal(${JSON.stringify({ id: inst.id, name: inst.name, description: inst.description || "" })})' title="Actualizar nombre, descripción, logo, banner o .mrpack">
               Editar
             </button>
+            <a href="/admin/api/instances/${inst.id}/download-mrpack" class="btn btn-secondary btn-sm" style="text-decoration:none;" title="Descargar paquete .mrpack de esta instancia">
+              Descargar .mrpack
+            </a>
             <button class="btn btn-secondary btn-sm" onclick="regenerateCode('${inst.id}')" title="Generar nuevo código de acceso de 18 caracteres">
               Regenerar Código
             </button>
@@ -225,6 +229,7 @@ function openCreateInstanceModal() {
   document.getElementById('mrpack-filename').style.display = 'none';
   // Hide mrpack required hint when creating
   document.getElementById('inst-mrpack').required = true;
+  document.getElementById('btn-modal-download-mrpack').style.display = 'none';
   document.getElementById('btn-save-instance').textContent = 'Procesar y Guardar';
   openModal('instance-modal');
 }
@@ -242,6 +247,12 @@ function openEditInstanceModal(inst) {
 
   // In edit mode mrpack is optional (only re-upload if you want to update it)
   document.getElementById('inst-mrpack').required = false;
+
+  const dlBtn = document.getElementById('btn-modal-download-mrpack');
+  if (dlBtn) {
+    dlBtn.href = `/admin/api/instances/${inst.id}/download-mrpack`;
+    dlBtn.style.display = 'inline-flex';
+  }
 
   document.getElementById('instance-is-edit').value = 'true';
   document.getElementById('mrpack-filename').style.display = 'none';
@@ -576,6 +587,114 @@ async function saveSettings() {
       showToast('Configuración y Términos guardados correctamente');
     } else {
       showToast(data.error || 'Error al guardar', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+// --- UPDATES MANAGEMENT ---
+
+async function loadUpdates() {
+  const tbody = document.getElementById('updates-table-body');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">Cargando actualizaciones...</td></tr>';
+
+  try {
+    const res = await fetch('/admin/api/updates');
+    const data = await res.json();
+    const updates = data.updates || [];
+
+    if (updates.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:30px;">No hay actualizaciones publicadas todavía.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = updates.map(u => {
+      const sizeMb = (u.file_size / (1024 * 1024)).toFixed(1);
+      return `
+        <tr>
+          <td><strong style="color:var(--primary); font-size:15px;">v${escapeHtml(u.version)}</strong></td>
+          <td><code>${escapeHtml(u.filename)}</code></td>
+          <td>${sizeMb} MB</td>
+          <td>
+            <span class="role-badge" style="background:${u.is_mandatory ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)'}; color:${u.is_mandatory ? '#ef4444' : '#3b82f6'};">
+              ${u.is_mandatory ? 'Obligatoria' : 'Opcional'}
+            </span>
+          </td>
+          <td style="max-width:240px; white-space:pre-wrap; font-size:12px; color:var(--text-secondary);">${escapeHtml(u.notes || '-')}</td>
+          <td>${u.created_at ? new Date(u.created_at).toLocaleString() : '-'}</td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              <a href="${u.download_url}" class="btn btn-secondary btn-sm" download title="Descargar instalador">
+                Descargar
+              </a>
+              <button class="btn btn-danger btn-sm" onclick="deleteUpdate('${u.id}', '${escapeHtml(u.version)}')">
+                Eliminar
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger)">Error al cargar actualizaciones.</td></tr>';
+  }
+}
+
+function openUploadUpdateModal() {
+  document.getElementById('update-form').reset();
+  openModal('update-modal');
+}
+
+async function handleUpdateSubmit(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn-submit-update');
+  btn.disabled = true;
+  btn.textContent = 'Subiendo instalador...';
+
+  const formData = new FormData();
+  formData.append('version', document.getElementById('update-version').value.trim());
+  formData.append('notes', document.getElementById('update-notes').value.trim());
+  formData.append('is_mandatory', document.getElementById('update-mandatory').checked);
+
+  const fileInput = document.getElementById('update-installer');
+  if (fileInput.files.length > 0) {
+    formData.append('installer', fileInput.files[0]);
+  }
+
+  try {
+    const res = await fetch('/admin/api/updates', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Actualización v${data.update.version} publicada exitosamente.`);
+      closeModal('update-modal');
+      loadUpdates();
+    } else {
+      showToast(data.error || 'Error al publicar actualización', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión al subir la actualización', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Subir y Publicar';
+  }
+}
+
+async function deleteUpdate(id, version) {
+  if (!confirm(`¿Eliminar la actualización v${version}? Los clientes no podrán descargar esta versión.`)) {
+    return;
+  }
+  try {
+    const res = await fetch(`/admin/api/updates/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Actualización v${version} eliminada.`);
+      loadUpdates();
+    } else {
+      showToast(data.error || 'Error al eliminar actualización', true);
     }
   } catch (err) {
     showToast('Error de conexión', true);

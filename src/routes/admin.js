@@ -5,7 +5,7 @@ const fs = require('fs');
 const router = express.Router();
 const config = require('../config');
 const db = require('../db');
-const { processMrpack } = require('../mrpack');
+const { processMrpack, packInstanceToMrpack } = require('../mrpack');
 
 // Storage engine for file uploads
 const storage = multer.diskStorage({
@@ -107,6 +107,7 @@ router.post(
         const mrpackFile = req.files['mrpack'][0];
         try {
           manifestData = processMrpack(mrpackFile.path, instanceDir);
+          fs.copyFileSync(mrpackFile.path, path.join(instanceDir, 'modpack.mrpack'));
         } finally {
           if (fs.existsSync(mrpackFile.path)) {
             fs.unlinkSync(mrpackFile.path);
@@ -185,6 +186,7 @@ router.put(
         const mrpackFile = req.files['mrpack'][0];
         try {
           const manifestData = processMrpack(mrpackFile.path, instanceDir);
+          fs.copyFileSync(mrpackFile.path, path.join(instanceDir, 'modpack.mrpack'));
           inst.mc_version = manifestData.mc_version;
           inst.loader = manifestData.loader;
           inst.stats = manifestData.stats;
@@ -203,6 +205,36 @@ router.put(
     }
   }
 );
+
+// Download .mrpack for instance
+router.get('/api/instances/:id/download-mrpack', (req, res) => {
+  try {
+    const { id } = req.params;
+    const instance = db.getInstanceById(id);
+    if (!instance) {
+      return res.status(404).json({ error: 'Instancia no encontrada' });
+    }
+
+    const instanceDir = path.join(config.INSTANCES_DIR, id);
+    if (!fs.existsSync(instanceDir)) {
+      return res.status(404).json({ error: 'Directorio de instancia no encontrado' });
+    }
+
+    const mrpackFile = path.join(instanceDir, 'modpack.mrpack');
+    if (fs.existsSync(mrpackFile)) {
+      return res.download(mrpackFile, `${instance.id}.mrpack`);
+    }
+
+    // Generate .mrpack dynamically from manifest.json and overrides
+    const buffer = packInstanceToMrpack(instanceDir);
+    res.setHeader('Content-Type', 'application/x-modrinth-modpack+zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(instance.id)}.mrpack"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[Download Mrpack Error]', err);
+    res.status(500).json({ error: 'Error al generar la descarga del .mrpack: ' + err.message });
+  }
+});
 
 // Regenerate 18-char access code
 router.post('/api/instances/:id/regenerate-code', (req, res) => {
@@ -295,6 +327,86 @@ router.put('/api/settings', (req, res) => {
   const { tos, announcement } = req.body;
   const updated = db.updateSettings({ tos, announcement });
   res.json({ success: true, settings: updated });
+});
+
+// --- CLIENT UPDATES MANAGEMENT ---
+
+router.get('/api/updates', (req, res) => {
+  res.json({ updates: db.getUpdates() });
+});
+
+router.post(
+  '/api/updates',
+  upload.fields([{ name: 'installer', maxCount: 1 }]),
+  (req, res) => {
+    try {
+      const { version, notes, is_mandatory } = req.body;
+
+      if (!version || !version.trim()) {
+        return res.status(400).json({ error: 'La versión (ej: 1.0.1) es obligatoria.' });
+      }
+
+      const cleanVersion = version.trim().replace(/^v/i, '');
+      const updatesDir = config.UPDATES_DIR;
+      if (!fs.existsSync(updatesDir)) {
+        fs.mkdirSync(updatesDir, { recursive: true });
+      }
+
+      let filename = null;
+      let downloadUrl = null;
+      let fileSize = 0;
+
+      if (req.files['installer'] && req.files['installer'][0]) {
+        const file = req.files['installer'][0];
+        filename = `EsquizoLauncher-Setup-${cleanVersion}${path.extname(file.originalname) || '.exe'}`;
+        const destPath = path.join(updatesDir, filename);
+        fs.copyFileSync(file.path, destPath);
+        fs.unlinkSync(file.path);
+        fileSize = fs.statSync(destPath).size;
+        downloadUrl = `/uploads/updates/${filename}`;
+      } else {
+        return res.status(400).json({ error: 'Debes adjuntar el archivo instalador (.exe).' });
+      }
+
+      const saved = db.saveUpdate({
+        version: cleanVersion,
+        notes: (notes || '').trim(),
+        is_mandatory: is_mandatory === 'true' || is_mandatory === true,
+        filename,
+        download_url: downloadUrl,
+        file_size: fileSize
+      });
+
+      res.status(201).json({
+        success: true,
+        update: saved,
+        message: `Versión ${cleanVersion} publicada con éxito`
+      });
+    } catch (err) {
+      console.error('[Admin Upload Update Error]', err);
+      res.status(500).json({ error: 'Error al publicar actualización: ' + err.message });
+    }
+  }
+);
+
+router.delete('/api/updates/:id', (req, res) => {
+  const { id } = req.params;
+  const list = db.getUpdates();
+  const target = list.find(u => u.id === id);
+
+  if (target && target.filename) {
+    const filePath = path.join(config.UPDATES_DIR, target.filename);
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch (e) {}
+    }
+  }
+
+  const deleted = db.deleteUpdate(id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Actualización no encontrada' });
+  }
+
+  res.json({ success: true, message: 'Actualización eliminada' });
 });
 
 module.exports = router;

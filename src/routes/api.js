@@ -229,4 +229,40 @@ router.get('/instance/:id/file', (req, res) => {
   res.sendFile(targetFile);
 });
 
+// Check client updates
+router.get('/updates/check', (req, res) => {
+  const currentVersion = (req.query.version || '1.0.0').trim().replace(/^v/i, '');
+  const latest = db.getLatestUpdate();
+
+  if (!latest) {
+    return res.json({ has_update: false, current_version: currentVersion });
+  }
+
+  // Compare semantic versions (or fallback to string/int comparison)
+  function isNewer(latestVer, currentVer) {
+    const p1 = latestVer.split('.').map(n => parseInt(n, 10) || 0);
+    const p2 = currentVer.split('.').map(n => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+      const a = p1[i] || 0;
+      const b = p2[i] || 0;
+      if (a > b) return true;
+      if (a < b) return false;
+    }
+    return false;
+  }
+
+  const hasUpdate = isNewer(latest.version, currentVersion);
+
+  res.json({
+    has_update: hasUpdate,
+    current_version: currentVersion,
+    latest_version: latest.version,
+    notes: latest.notes || '',
+    is_mandatory: !!latest.is_mandatory,
+    download_url: latest.download_url,
+    file_size: latest.file_size || 0,
+    published_at: latest.created_at
+  });
+});
+
 module.exports = router;

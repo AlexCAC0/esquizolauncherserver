@@ -20,9 +20,9 @@ Al utilizar este cliente y participar en nuestros eventos, aceptas de manera obl
 El software, las modificaciones propietarias, los complementos, la identidad visual y los recursos de los eventos son propiedad exclusiva de **EsquizoStudios** y **NO** son de código abierto.
 Queda estrictamente prohibida la descompilación, extracción, redistribución o filtración de cualquier archivo, mod o asset entregado a través del launcher.
 
-### 2. Política Anti-Filtraciones (Anti-Leak)
-Para proteger la integridad y originalidad de los eventos, el launcher ejecuta un protocolo de protección estricto: todos los mods de cada instancia se almacenan de forma efímera durante la sesión de juego y son eliminados automáticamente al cerrarse Minecraft.
-Cualquier intento deliberado de interceptar, clonar o evadir este mecanismo resultará en el veto permanente del usuario y de su cuenta de Discord asociada.
+### 2. Política de Recursos y Archivos de Eventos
+Los recursos, modificaciones y complementos utilizados durante las partidas son suministrados por los servidores de **EsquizoStudios** para la ejecución exclusiva de las sesiones oficiales. Queda prohibida la extracción, redistribución o copia no autorizada de dichos elementos.
+El incumplimiento resultará en el cese inmediato de acceso y la revocación de la participación en futuros eventos.
 
 ### 3. Conducta y Juego Limpio
 - Está prohibido el uso de clientes modificados externos, hacks, macros o herramientas no autorizadas.
@@ -37,6 +37,7 @@ La administración de EsquizoStudios se reserva el derecho de revocar el acceso 
 const INITIAL_DATA = {
   instances: [],
   users: [],
+  updates: [],
   staff: [
     // Pre-populate with default admin IDs if configured
     ...config.DISCORD.DEFAULT_ADMIN_IDS.map(id => ({
@@ -66,6 +67,7 @@ class Database {
         return {
           instances: parsed.instances || [],
           users: parsed.users || [],
+          updates: parsed.updates || [],
           staff: parsed.staff || INITIAL_DATA.staff,
           settings: { ...INITIAL_DATA.settings, ...(parsed.settings || {}) }
         };
@@ -297,6 +299,46 @@ class Database {
     this.data.settings = { ...this.data.settings, ...newSettings };
     this.save();
     return this.data.settings;
+  }
+
+  // --- CLIENT UPDATES MANAGEMENT ---
+
+  getUpdates() {
+    if (!this.data.updates) this.data.updates = [];
+    return this.data.updates;
+  }
+
+  getLatestUpdate() {
+    const list = this.getUpdates();
+    if (list.length === 0) return null;
+    return list[0]; // First element is latest
+  }
+
+  saveUpdate(updateData) {
+    if (!this.data.updates) this.data.updates = [];
+    const index = this.data.updates.findIndex(u => u.version === updateData.version);
+    if (index >= 0) {
+      this.data.updates[index] = { ...this.data.updates[index], ...updateData, updated_at: new Date().toISOString() };
+    } else {
+      this.data.updates.unshift({
+        id: crypto.randomUUID(),
+        ...updateData,
+        created_at: new Date().toISOString()
+      });
+    }
+    this.save();
+    return this.data.updates.find(u => u.version === updateData.version);
+  }
+
+  deleteUpdate(id) {
+    if (!this.data.updates) return false;
+    const initial = this.data.updates.length;
+    this.data.updates = this.data.updates.filter(u => u.id !== id);
+    if (this.data.updates.length !== initial) {
+      this.save();
+      return true;
+    }
+    return false;
   }
 }
 
