@@ -459,7 +459,7 @@ router.delete('/api/updates/:id', (req, res) => {
 router.get('/api/analytics', (req, res) => {
   res.json({
     success: true,
-    data: db.getMetricsSummary()
+    metrics: db.getMetricsSummary()
   });
 });
 
@@ -473,16 +473,18 @@ router.get('/api/broadcast', (req, res) => {
 });
 
 router.post('/api/broadcast', (req, res) => {
-  const { title, message, type, expires_in_minutes } = req.body;
+  const { title, message, type, duration_minutes, expires_in_minutes } = req.body;
   if (!message || !message.trim()) {
     return res.status(400).json({ error: 'El mensaje de la alerta es obligatorio.' });
   }
 
+  const duration = parseInt(duration_minutes || expires_in_minutes, 10) || 60;
   const broadcast = db.setBroadcast({
     title: title ? title.trim() : 'Aviso Oficial de EsquizoStudios',
     message: message.trim(),
     type: type || 'info',
-    expires_in_minutes: parseInt(expires_in_minutes, 10) || 60
+    expires_in_minutes: duration,
+    author: req.session.staffUser ? req.session.staffUser.username : 'Staff'
   });
 
   sendDiscordAdminWebhook({

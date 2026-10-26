@@ -846,6 +846,7 @@ async function sendBroadcastAlert(e) {
     const res = await fetch('/admin/api/broadcast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ title, message, type, duration_minutes })
     });
     const data = await res.json();
@@ -857,14 +858,18 @@ async function sendBroadcastAlert(e) {
       showToast(data.error || 'Error al emitir alerta', true);
     }
   } catch (err) {
-    showToast('Error de conexión', true);
+    console.error('Error sending broadcast:', err);
+    showToast(`Error al emitir alerta: ${err.message || 'Error de red'}`, true);
   }
 }
 
 async function clearActiveBroadcast() {
   if (!confirm('¿Seguro que deseas retirar la alerta activa? Ya no aparecerá a ningún cliente.')) return;
   try {
-    const res = await fetch('/admin/api/broadcast', { method: 'DELETE' });
+    const res = await fetch('/admin/api/broadcast', {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
     const data = await res.json();
     if (data.success) {
       showToast('Alerta retirada.');
@@ -873,6 +878,7 @@ async function clearActiveBroadcast() {
       showToast(data.error || 'Error al retirar alerta', true);
     }
   } catch (err) {
-    showToast('Error de conexión', true);
+    console.error('Error clearing broadcast:', err);
+    showToast(`Error al retirar alerta: ${err.message || 'Error de red'}`, true);
   }
 }

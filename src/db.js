@@ -409,13 +409,36 @@ class Database {
     const inMenu = active.filter(s => s.status !== 'playing');
     const m = this.data.metrics || { launches_by_instance: {}, launches_by_day: {}, java_versions: {} };
 
+    const today = new Date().toISOString().split('T')[0];
+    const launchesToday = (m.launches_by_day && m.launches_by_day[today]) || 0;
+
+    // Find most popular instance
+    let mostPopularInstance = '-';
+    let maxLaunches = 0;
+    if (m.launches_by_instance) {
+      for (const [instId, count] of Object.entries(m.launches_by_instance)) {
+        if (count > maxLaunches) {
+          maxLaunches = count;
+          mostPopularInstance = instId;
+        }
+      }
+    }
+
     return {
-      total_users: this.data.users.length,
-      total_instances: this.data.instances.length,
-      active_now: active.length,
-      playing_now: playing.length,
-      in_menu_now: inMenu.length,
-      active_sessions: active,
+      totalUsers: this.data.users.length,
+      totalInstances: this.data.instances.length,
+      onlineUsers: active.length,
+      playingNow: playing.length,
+      inMenuNow: inMenu.length,
+      launchesToday,
+      mostPopularInstance,
+      activeSessions: active.map(s => ({
+        username: s.username,
+        status: s.status,
+        instance_id: s.instanceId,
+        java_version: s.javaVersion,
+        last_ping: s.lastPing
+      })),
       launches_by_instance: m.launches_by_instance || {},
       launches_by_day: m.launches_by_day || {},
       java_versions: m.java_versions || {}
@@ -435,7 +458,7 @@ class Database {
     return b;
   }
 
-  setBroadcast({ title, message, type = 'info', expires_in_minutes = 60 }) {
+  setBroadcast({ title, message, type = 'info', expires_in_minutes = 60, author = 'Staff' }) {
     if (!message) {
       this.data.settings.active_broadcast = null;
     } else {
@@ -445,6 +468,8 @@ class Database {
         title: title || 'Aviso de EsquizoStudios',
         message: message.trim(),
         type: type || 'info', // 'info', 'warning', 'urgent'
+        author: author || 'Staff',
+        duration_minutes: expires_in_minutes,
         created_at: new Date().toISOString(),
         expires_at: exp
       };
