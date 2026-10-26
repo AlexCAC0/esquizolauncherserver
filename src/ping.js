@@ -1,15 +1,29 @@
 const net = require('net');
 
 /**
- * Pings a Minecraft server using the Server List Ping protocol (SLP).
- * Works for modern Minecraft servers (1.7 - 1.21+).
- * 
+ * Encodes a VarInt according to Minecraft protocol specs.
+ */
+function writeVarInt(value) {
+  const bytes = [];
+  while (true) {
+    if ((value & ~0x7f) === 0) {
+      bytes.push(value);
+      break;
+    }
+    bytes.push((value & 0x7f) | 0x80);
+    value >>>= 7;
+  }
+  return Buffer.from(bytes);
+}
+
+/**
+ * Pings a Minecraft server using standard Server List Ping (SLP) protocol.
  * @param {string} host - Hostname or IP
  * @param {number} port - Port (default 25565)
- * @param {number} timeout - Timeout in milliseconds (default 3500)
- * @returns {Promise<Object>} - { online, ping, players: { online, max }, version, motd }
+ * @param {number} timeout - Timeout in milliseconds (default 4000)
+ * @returns {Promise<Object>}
  */
-function pingMinecraftServer(host, port = 25565, timeout = 3500) {
+function pingMinecraftServer(host, port = 25565, timeout = 4000) {
   return new Promise((resolve) => {
     if (!host || typeof host !== 'string') {
       return resolve({ online: false, ping: -1, error: 'Host no especificado' });
@@ -35,25 +49,32 @@ function pingMinecraftServer(host, port = 25565, timeout = 3500) {
     socket.connect(cleanPort, cleanHost, () => {
       try {
         const hostBuffer = Buffer.from(cleanHost, 'utf8');
-        // Handshake packet (Packet ID 0x00)
-        const handshakeBody = Buffer.concat([
-          Buffer.from([0x00]), // packet id
-          Buffer.from([0x04]), // protocol version placeholder
-          Buffer.from([hostBuffer.length]),
+        const portBuffer = Buffer.alloc(2);
+        portBuffer.writeUInt16BE(cleanPort, 0);
+
+        // Handshake packet: packetId(0x00) + protocolVersion(-1 or 47) + hostLength + host + port + nextState(1)
+        const handshakePayload = Buffer.concat([
+          writeVarInt(0x00),
+          writeVarInt(765), // Modern protocol version (1.20.4+ / works back to 1.7)
+          writeVarInt(hostBuffer.length),
           hostBuffer,
-          Buffer.from([(cleanPort >> 8) & 0xff, cleanPort & 0xff]),
-          Buffer.from([0x01]) // Next state: 1 (status)
+          portBuffer,
+          writeVarInt(1) // Next state: 1 (status)
         ]);
 
         const handshakePacket = Buffer.concat([
-          Buffer.from([handshakeBody.length]),
-          handshakeBody
+          writeVarInt(handshakePayload.length),
+          handshakePayload
         ]);
 
         socket.write(handshakePacket);
 
-        // Status request packet (Packet ID 0x00, empty body)
-        socket.write(Buffer.from([0x01, 0x00]));
+        // Status request packet: length(1), packetId(0x00)
+        const statusPacket = Buffer.concat([
+          writeVarInt(1),
+          writeVarInt(0x00)
+        ]);
+        socket.write(statusPacket);
       } catch (err) {
         finish({ online: false, ping: -1, error: err.message });
       }
@@ -72,7 +93,7 @@ function pingMinecraftServer(host, port = 25565, timeout = 3500) {
           const jsonStr = text.substring(startIdx, endIdx + 1);
           const data = JSON.parse(jsonStr);
 
-          const ping = Date.now() - startTime;
+          const ping = Math.max(1, Date.now() - startTime);
           let motd = '';
           if (typeof data.description === 'string') {
             motd = data.description;
@@ -83,7 +104,6 @@ function pingMinecraftServer(host, port = 25565, timeout = 3500) {
             }
           }
 
-          // Strip standard Minecraft color codes § for clean display
           const cleanMotd = motd.replace(/§[0-9a-fk-or]/gi, '').trim();
 
           finish({
@@ -98,7 +118,7 @@ function pingMinecraftServer(host, port = 25565, timeout = 3500) {
           });
         }
       } catch (e) {
-        // Continue accumulating chunks if JSON is not complete
+        // Wait for more chunks if JSON is fragmented
       }
     });
 
