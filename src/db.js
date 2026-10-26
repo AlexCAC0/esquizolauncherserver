@@ -50,13 +50,15 @@ const INITIAL_DATA = {
   settings: {
     tos: DEFAULT_TOS,
     announcement: '¡Bienvenidos a EsquizoStudios! Prepara tu cliente para los próximos torneos y eventos exclusivos.',
-    require_discord_for_offline: true
+    require_discord_for_offline: true,
+    active_broadcast: null
   }
 };
 
 class Database {
   constructor() {
     this.data = this.load();
+    this.activeSessions = new Map(); // clientId/username -> { username, instanceId, startedAt, lastPing, javaVersion }
   }
 
   load() {
@@ -68,6 +70,7 @@ class Database {
           instances: parsed.instances || [],
           users: parsed.users || [],
           updates: parsed.updates || [],
+          metrics: parsed.metrics || { launches_by_instance: {}, launches_by_day: {}, java_versions: {} },
           staff: parsed.staff || INITIAL_DATA.staff,
           settings: { ...INITIAL_DATA.settings, ...(parsed.settings || {}) }
         };
@@ -353,6 +356,107 @@ class Database {
       return true;
     }
     return false;
+  }
+  // --- METRICS & REALTIME SESSIONS ---
+
+  recordHeartbeat({ sessionId, username, instanceId, status, javaVersion }) {
+    if (!sessionId) return;
+    const now = Date.now();
+    this.activeSessions.set(sessionId, {
+      username: username || 'Anónimo',
+      instanceId: instanceId || 'menu',
+      status: status || 'online',
+      javaVersion: javaVersion || 'Desconocido',
+      lastPing: now,
+      startedAt: this.activeSessions.has(sessionId) ? this.activeSessions.get(sessionId).startedAt : now
+    });
+  }
+
+  recordGameLaunch({ instanceId, username, javaVersion }) {
+    if (!this.data.metrics) {
+      this.data.metrics = { launches_by_instance: {}, launches_by_day: {}, java_versions: {} };
+    }
+    const m = this.data.metrics;
+    if (instanceId) {
+      m.launches_by_instance[instanceId] = (m.launches_by_instance[instanceId] || 0) + 1;
+    }
+    const today = new Date().toISOString().split('T')[0];
+    m.launches_by_day[today] = (m.launches_by_day[today] || 0) + 1;
+    if (javaVersion) {
+      const jKey = String(javaVersion).trim();
+      m.java_versions[jKey] = (m.java_versions[jKey] || 0) + 1;
+    }
+    this.save();
+  }
+
+  getActiveSessions() {
+    const now = Date.now();
+    const cutoff = now - 60000; // Sessions active in last 60 seconds
+    const active = [];
+    for (const [sId, sess] of this.activeSessions.entries()) {
+      if (sess.lastPing >= cutoff) {
+        active.push({ sessionId: sId, ...sess });
+      } else {
+        this.activeSessions.delete(sId);
+      }
+    }
+    return active;
+  }
+
+  getMetricsSummary() {
+    const active = this.getActiveSessions();
+    const playing = active.filter(s => s.status === 'playing');
+    const inMenu = active.filter(s => s.status !== 'playing');
+    const m = this.data.metrics || { launches_by_instance: {}, launches_by_day: {}, java_versions: {} };
+
+    return {
+      total_users: this.data.users.length,
+      total_instances: this.data.instances.length,
+      active_now: active.length,
+      playing_now: playing.length,
+      in_menu_now: inMenu.length,
+      active_sessions: active,
+      launches_by_instance: m.launches_by_instance || {},
+      launches_by_day: m.launches_by_day || {},
+      java_versions: m.java_versions || {}
+    };
+  }
+
+  // --- BROADCAST POP-UP ALERTS ---
+
+  getActiveBroadcast() {
+    const b = this.data.settings.active_broadcast;
+    if (!b) return null;
+    if (b.expires_at && new Date(b.expires_at).getTime() < Date.now()) {
+      this.data.settings.active_broadcast = null;
+      this.save();
+      return null;
+    }
+    return b;
+  }
+
+  setBroadcast({ title, message, type = 'info', expires_in_minutes = 60 }) {
+    if (!message) {
+      this.data.settings.active_broadcast = null;
+    } else {
+      const exp = expires_in_minutes ? new Date(Date.now() + expires_in_minutes * 60000).toISOString() : null;
+      this.data.settings.active_broadcast = {
+        id: crypto.randomUUID(),
+        title: title || 'Aviso de EsquizoStudios',
+        message: message.trim(),
+        type: type || 'info', // 'info', 'warning', 'urgent'
+        created_at: new Date().toISOString(),
+        expires_at: exp
+      };
+    }
+    this.save();
+    return this.data.settings.active_broadcast;
+  }
+
+  clearBroadcast() {
+    this.data.settings.active_broadcast = null;
+    this.save();
+    return true;
   }
 }
 

@@ -6,15 +6,44 @@ const config = require('../config');
 const db = require('../db');
 const { pingMinecraftServer } = require('../ping');
 
-// Client ping & announcement
+// Client ping & announcement & active broadcast popup
 router.get('/status', (req, res) => {
   const settings = db.getSettings();
+  const broadcast = db.getActiveBroadcast();
   res.json({
     online: true,
     studio: config.STUDIO_NAME,
     version: config.VERSION,
-    announcement: settings.announcement
+    announcement: settings.announcement,
+    broadcast: broadcast || null
   });
+});
+
+// Client heartbeat (Realtime Analytics)
+router.post('/telemetry/heartbeat', (req, res) => {
+  const { session_id, username, instance_id, status, java_version } = req.body;
+  if (session_id) {
+    db.recordHeartbeat({
+      sessionId: session_id,
+      username: username || 'Anónimo',
+      instanceId: instance_id || 'menu',
+      status: status || 'online',
+      javaVersion: java_version || null
+    });
+  }
+  const broadcast = db.getActiveBroadcast();
+  res.json({ ok: true, broadcast: broadcast || null });
+});
+
+// Client launch telemetry
+router.post('/telemetry/launch', (req, res) => {
+  const { instance_id, username, java_version } = req.body;
+  db.recordGameLaunch({
+    instanceId: instance_id,
+    username,
+    javaVersion: java_version
+  });
+  res.json({ ok: true });
 });
 
 // Terms and Conditions

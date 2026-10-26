@@ -65,6 +65,8 @@ function setupNavigation() {
       else if (tabName === 'staff') loadStaff();
       else if (tabName === 'settings') loadSettings();
       else if (tabName === 'updates') loadUpdates();
+      else if (tabName === 'analytics') loadAnalytics();
+      else if (tabName === 'broadcasts') loadBroadcasts();
     });
   });
 }
@@ -743,4 +745,134 @@ function escapeHtml(str) {
     '"': '&quot;',
     "'": '&#039;'
   }[m]));
+}
+
+/* ==========================================================================
+   MÉTRICAS & TELEMETRÍA EN TIEMPO REAL
+   ========================================================================== */
+async function loadAnalytics() {
+  try {
+    const res = await fetch('/admin/api/analytics');
+    const data = await res.json();
+    if (!data.success) return showToast(data.error || 'Error cargando analíticas', true);
+
+    const m = data.metrics;
+    document.getElementById('metric-online-now').textContent = m.onlineUsers || 0;
+    document.getElementById('metric-playing-sub').textContent = `${m.playingNow || 0} jugando ahora`;
+    document.getElementById('metric-launches-today').textContent = m.launchesToday || 0;
+    document.getElementById('metric-total-users').textContent = m.totalUsers || 0;
+    document.getElementById('metric-popular-instance').textContent = m.mostPopularInstance || '-';
+
+    const tbody = document.getElementById('realtime-players-body');
+    if (!m.activeSessions || m.activeSessions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay jugadores conectados en este momento.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = m.activeSessions.map(s => {
+      const isPlaying = s.status === 'playing';
+      const statusBadge = isPlaying
+        ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3);"><span class="badge-pulse"></span>Jugando</span>`
+        : `<span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3);">En el Menú</span>`;
+      
+      const secondsAgo = Math.round((Date.now() - (s.last_ping || Date.now())) / 1000);
+      const pingText = secondsAgo < 5 ? 'Ahora mismo' : `hace ${secondsAgo}s`;
+
+      return `
+        <tr>
+          <td style="font-weight: 600; color: #fff;">${escapeHtml(s.username || 'Desconocido')}</td>
+          <td>${statusBadge}</td>
+          <td><code>${escapeHtml(s.instance_id || 'Ninguna')}</code></td>
+          <td><span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(s.java_version || 'N/A')}</span></td>
+          <td style="color: var(--text-secondary); font-size: 13px;">${pingText}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error loading analytics:', err);
+    showToast('Error cargando métricas en tiempo real', true);
+  }
+}
+
+/* ==========================================================================
+   DIFUSIÓN DE ALERTAS & POP-UPS
+   ========================================================================== */
+async function loadBroadcasts() {
+  try {
+    const res = await fetch('/admin/api/broadcast');
+    const data = await res.json();
+    const container = document.getElementById('active-broadcast-container');
+
+    if (!data.broadcast) {
+      container.innerHTML = '<p style="color: var(--text-muted); margin: 0; text-align: center;">No hay ninguna alerta activa difundida en este momento.</p>';
+      return;
+    }
+
+    const b = data.broadcast;
+    const typeColor = b.type === 'urgent' ? '#ef4444' : (b.type === 'warning' ? '#f59e0b' : '#3b82f6');
+    const typeBg = b.type === 'urgent' ? 'rgba(239, 68, 68, 0.1)' : (b.type === 'warning' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(59, 130, 246, 0.1)');
+    const typeBorder = b.type === 'urgent' ? 'rgba(239, 68, 68, 0.3)' : (b.type === 'warning' ? 'rgba(245, 158, 11, 0.3)' : 'rgba(59, 130, 246, 0.3)');
+
+    container.innerHTML = `
+      <div style="background: ${typeBg}; border: 1px solid ${typeBorder}; padding: 16px; border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+          <h4 style="margin: 0; color: ${typeColor}; font-size: 1.05rem;">${escapeHtml(b.title)}</h4>
+          <span class="badge" style="background: ${typeBg}; color: ${typeColor}; border: 1px solid ${typeBorder}; text-transform: uppercase;">${escapeHtml(b.type)}</span>
+        </div>
+        <p style="margin: 0 0 12px; color: #f1f5f9; font-size: 0.95rem; line-height: 1.5;">${escapeHtml(b.message)}</p>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">
+          Emitido por: <strong>${escapeHtml(b.author || 'Staff')}</strong> · Expira en: ${Math.round(b.duration_minutes)} min
+        </div>
+        <button class="btn btn-secondary" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4); width: 100%;" onclick="clearActiveBroadcast()">
+          Retirar y Desactivar Alerta
+        </button>
+      </div>
+    `;
+  } catch (err) {
+    console.error('Error loading broadcast:', err);
+  }
+}
+
+async function sendBroadcastAlert(e) {
+  e.preventDefault();
+  const title = document.getElementById('bc-title').value.trim();
+  const message = document.getElementById('bc-message').value.trim();
+  const type = document.getElementById('bc-type').value;
+  const duration_minutes = parseInt(document.getElementById('bc-duration').value, 10);
+
+  if (!title || !message) return showToast('Completa el título y mensaje', true);
+
+  try {
+    const res = await fetch('/admin/api/broadcast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, message, type, duration_minutes })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('¡Alerta global emitida correctamente a todos los clientes!');
+      document.getElementById('broadcast-form').reset();
+      loadBroadcasts();
+    } else {
+      showToast(data.error || 'Error al emitir alerta', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
+}
+
+async function clearActiveBroadcast() {
+  if (!confirm('¿Seguro que deseas retirar la alerta activa? Ya no aparecerá a ningún cliente.')) return;
+  try {
+    const res = await fetch('/admin/api/broadcast', { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Alerta retirada.');
+      loadBroadcasts();
+    } else {
+      showToast(data.error || 'Error al retirar alerta', true);
+    }
+  } catch (err) {
+    showToast('Error de conexión', true);
+  }
 }

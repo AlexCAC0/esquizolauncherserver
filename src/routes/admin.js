@@ -454,4 +454,55 @@ router.delete('/api/updates/:id', (req, res) => {
   res.json({ success: true, message: 'Actualización eliminada' });
 });
 
+// --- METRICS & REALTIME ANALYTICS ---
+
+router.get('/api/analytics', (req, res) => {
+  res.json({
+    success: true,
+    data: db.getMetricsSummary()
+  });
+});
+
+// --- BROADCAST POP-UP ALERTS ---
+
+router.get('/api/broadcast', (req, res) => {
+  res.json({
+    success: true,
+    broadcast: db.getActiveBroadcast()
+  });
+});
+
+router.post('/api/broadcast', (req, res) => {
+  const { title, message, type, expires_in_minutes } = req.body;
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'El mensaje de la alerta es obligatorio.' });
+  }
+
+  const broadcast = db.setBroadcast({
+    title: title ? title.trim() : 'Aviso Oficial de EsquizoStudios',
+    message: message.trim(),
+    type: type || 'info',
+    expires_in_minutes: parseInt(expires_in_minutes, 10) || 60
+  });
+
+  sendDiscordAdminWebhook({
+    title: '📢 Alerta Global Emitida',
+    description: `Se ha difundido un pop-up oficial en tiempo real a todos los clientes conectados.`,
+    color: broadcast.type === 'urgent' ? 0xef4444 : (broadcast.type === 'warning' ? 0xf59e0b : 0x3b82f6),
+    fields: [
+      { name: 'Título', value: broadcast.title, inline: true },
+      { name: 'Tipo', value: broadcast.type.toUpperCase(), inline: true },
+      { name: 'Caducidad', value: `${expires_in_minutes || 60} minutos`, inline: true },
+      { name: 'Contenido', value: broadcast.message }
+    ]
+  });
+
+  res.json({ success: true, broadcast });
+});
+
+router.delete('/api/broadcast', (req, res) => {
+  db.clearBroadcast();
+  res.json({ success: true, message: 'Alerta pop-up retirada con éxito' });
+});
+
 module.exports = router;
