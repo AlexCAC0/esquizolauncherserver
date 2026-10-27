@@ -40,6 +40,15 @@ app.use('/uploads', express.static(config.UPLOADS_DIR));
 // Serve Admin Dashboard
 app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 
+// Serve Legal documents for Discord OAuth (Terms of Service & Privacy Policy)
+app.get('/terms', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'terms.html'));
+});
+
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'privacy.html'));
+});
+
 // Mount routers
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
